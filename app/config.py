@@ -1,4 +1,32 @@
+import logging
 import os
+from pathlib import Path
+
+
+APP_LOG_FILE = os.getenv("APP_LOG_FILE", "/home/bfa/iot_queuingfix.log")
+
+
+def configure_logging(log_file: str | None = None) -> logging.Logger:
+    target = Path(log_file or APP_LOG_FILE)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger("iot_queuingfix")
+    logger.setLevel(logging.INFO)
+
+    if logger.handlers:
+        return logger
+
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    file_handler = logging.FileHandler(target)
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.INFO)
+
+    logger.addHandler(file_handler)
+    return logger
 
 
 def _get_env(name: str, default: str | None = None, *, cast=str):

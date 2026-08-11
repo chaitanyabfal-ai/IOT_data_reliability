@@ -258,6 +258,192 @@ This is helpful when the volume of sensor data increases and the queue needs mor
 
 ---
 
+## 9. Raw-host systemd deployment (no Docker)
+
+If you are deploying directly on Ubuntu without Docker, each long-running component should be managed as a dedicated `systemd` service. This is the recommended way to run the FastAPI app and Celery worker on a VM or bare-metal host.
+
+### 9.1 Create a service user
+
+Create a dedicated Linux user for the application:
+
+```bash
+sudo adduser --system --group --home /opt/iot-queuingfix iotuser
+sudo mkdir -p /opt/iot-queuingfix
+sudo chown -R iotuser:iotuser /opt/iot-queuingfix
+```
+
+Clone the code under that folder and create a virtual environment:
+
+```bash
+sudo -u iotuser bash -lc 'cd /opt/iot-queuingfix && git clone <repo-url> .'
+sudo -u iotuser bash -lc 'cd /opt/iot-queuingfix && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt'
+```
+
+### 9.2 Configure environment variables
+
+Create an environment file such as `/etc/default/iot-queuingfix`:
+
+```bash
+sudo nano /etc/default/iot-queuingfix
+```
+
+Add:
+
+```bash
+ON_PREM_SERVER_IP=192.168.1.25
+ON_PREM_SERVER_PORT=9000
+ON_PREM_DATA_ENDPOINT=/api/data
+ON_PREM_PROTOCOL=http
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_DB=0
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5432
+POSTGRES_USER=user
+POSTGRES_PASSWORD=password
+POSTGRES_DB=iot_db
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/0
+```
+
+### 9.3 Create the FastAPI service unit
+
+Create `/etc/systemd/system/fastapi-app.service`:
+
+```ini
+[Unit]
+Description=IoT FastAPI Service
+After=network.target redis.service postgresql.service
+Wants=redis.service postgresql.service
+
+[Service]
+Type=simple
+User=iotuser
+Group=iotuser
+WorkingDirectory=/opt/iot-queuingfix
+EnvironmentFile=/etc/default/iot-queuingfix
+ExecStart=/opt/iot-queuingfix/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then reload and enable it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable fastapi-app.service
+sudo systemctl start fastapi-app.service
+sudo systemctl status fastapi-app.service
+```
+
+### 9.4 Create the Celery worker service unit
+
+Create `/etc/systemd/system/celery-worker.service`:
+
+```ini
+[Unit]
+Description=IoT Celery Worker
+After=network.target redis.service postgresql.service
+Wants=redis.service postgresql.service
+
+[Service]
+Type=simple
+User=iotuser
+Group=iotuser
+WorkingDirectory=/opt/iot-queuingfix
+EnvironmentFile=/etc/default/iot-queuingfix
+ExecStart=/opt/iot-queuingfix/.venv/bin/celery -A app.celery_app.celery worker --loglevel=info
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable celery-worker.service
+sudo systemctl start celery-worker.service
+sudo systemctl status celery-worker.service
+```
+
+### 9.5 Optional: Redis service
+
+If Redis is installed directly on the Ubuntu host, ensure it is enabled:
+
+```bash
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
+sudo systemctl status redis-server
+```
+
+If Redis is not installed, install it:
+
+```bash
+sudo apt update
+sudo apt install -y redis-server
+```
+
+### 9.6 Optional: PostgreSQL / TimescaleDB service
+
+If TimescaleDB is running directly on the host, enable it similarly:
+
+```bash
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+sudo systemctl status postgresql
+```
+
+If needed, install PostgreSQL and TimescaleDB according to your environment's database setup.
+
+### 9.7 Manage the services
+
+Common lifecycle commands:
+
+```bash
+sudo systemctl start fastapi-app.service
+sudo systemctl stop fastapi-app.service
+sudo systemctl restart fastapi-app.service
+sudo systemctl status fastapi-app.service
+
+sudo systemctl start celery-worker.service
+sudo systemctl stop celery-worker.service
+sudo systemctl restart celery-worker.service
+sudo systemctl status celery-worker.service
+```
+
+To see logs for a service:
+
+```bash
+journalctl -u fastapi-app.service --follow
+journalctl -u celery-worker.service --follow
+journalctl -xe
+```
+
+### 9.8 Why this is better for long-running components
+
+Using `systemd` for long-running services provides:
+
+- automatic restart after crashes
+- startup during system boot
+- dependency ordering between services
+- clean process isolation
+- centralized logging through journald
+- easier production administration with `systemctl`
+
+This is the correct raw-host pattern when the system is meant to run continuously without Docker.
+
+---
+
 ## 9. Stop and clean up
 
 To stop the stack:

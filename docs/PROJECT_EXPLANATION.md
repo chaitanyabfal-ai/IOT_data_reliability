@@ -162,6 +162,109 @@ The Docker configuration is designed so the app runs as a containerized service 
 
 ---
 
+## Systemd (`systemctl`) Deployment (Raw Host)
+
+When the application is deployed directly on a bare-metal server or a standard VM without containerization, the operating system's init system is responsible for process supervision. On modern Linux distributions, this is typically `systemd`.
+
+In this model, each long-running component is managed as a dedicated system service:
+
+- FastAPI application service
+- Celery worker service
+- Redis service
+- PostgreSQL/TimescaleDB service
+
+Each service is represented by a unit file usually placed under `/etc/systemd/system/`, for example:
+
+- `/etc/systemd/system/fastapi-app.service`
+- `/etc/systemd/system/celery-worker.service`
+- `/etc/systemd/system/redis.service`
+- `/etc/systemd/system/postgresql.service`
+
+### Process management
+
+Each service file defines:
+
+- the user account that should run the process
+- the working directory
+- environment variables
+- the actual command to start the application
+- restart behavior and dependencies
+
+For example, the FastAPI service can be configured to run `uvicorn app.main:app --host 0.0.0.0 --port 8000` as a specific system user. The service can then be started, stopped, restarted, and enabled for boot using `systemctl` commands such as:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable fastapi-app.service
+sudo systemctl start fastapi-app.service
+sudo systemctl status fastapi-app.service
+sudo systemctl restart fastapi-app.service
+```
+
+This gives a production-grade process lifecycle: automatic restarts, dependency management, and startup at system boot.
+
+### Environment variables in systemd
+
+Environment variables are usually defined directly in the unit file using `Environment=` entries or provided through a separate environment file:
+
+```ini
+[Service]
+User=iotuser
+WorkingDirectory=/opt/iot-queuingfix
+Environment=ON_PREM_SERVER_IP=192.168.1.25
+Environment=ON_PREM_SERVER_PORT=9000
+Environment=ON_PREM_DATA_ENDPOINT=/api/data
+Environment=ON_PREM_PROTOCOL=http
+ExecStart=/home/iotuser/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+```
+
+This ensures the application behaves consistently across restarts and does not rely on interactive shell variables.
+
+### Celery management
+
+For Celery, a separate unit file would start the worker process, for example:
+
+```bash
+/home/iotuser/.venv/bin/celery -A app.celery_app.celery worker --loglevel=info
+```
+
+A dedicated `systemd` service for the worker helps ensure tasks continue processing even if the terminal session closes. It also allows centralized supervision and log capture.
+
+### Redis and TimescaleDB
+
+On a raw-host deployment, Redis and PostgreSQL/TimescaleDB are often installed directly as operating system services rather than as containers. `systemd` starts them automatically and ensures they remain available to the application.
+
+This raw-host approach is common in enterprise environments where administrators prefer full OS-native service control, auditing, and process isolation over container orchestration.
+
+### Operating system logging with journald
+
+When an application runs under `systemd`, its `stdout` and `stderr` streams are captured by the Linux kernel and forwarded to the journald logging subsystem. This allows system administrators to view application logs centrally using `journalctl`.
+
+Typical commands include:
+
+```bash
+journalctl -u fastapi-app.service --follow
+journalctl -u celery-worker.service --follow
+journalctl -xe
+```
+
+This is especially powerful in production because logs remain attached to the service lifecycle and are easier to trace during incidents, restarts, or failures.
+
+### Why this model matters
+
+The systemd deployment model is valuable because it provides:
+
+- stable process supervision
+- automatic restart on failure
+- boot-time service startup
+- centralized logging through journald
+- OS-level resource and security control
+
+This is often preferred for internal enterprise or on-prem deployments where direct host management is already established and the team is comfortable operating at the OS service level rather than via Docker Compose.
+
+---
+
 ## Operational Characteristics
 
 ### Reliability
