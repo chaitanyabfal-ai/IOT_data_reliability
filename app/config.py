@@ -66,6 +66,9 @@ CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 CELERY_TASK_SERIALIZER = os.getenv("CELERY_TASK_SERIALIZER", "json")
 CELERY_RESULT_SERIALIZER = os.getenv("CELERY_RESULT_SERIALIZER", "json")
 CELERY_TIMEZONE = os.getenv("CELERY_TIMEZONE", "UTC")
+# Number of readings to group into a single Celery task when sending batches.
+# Set via environment variable `BATCH_SIZE`. Defaults to 500.
+BATCH_SIZE = _get_env("BATCH_SIZE", "500", cast=int)
 
 
 def get_on_prem_server_url(
